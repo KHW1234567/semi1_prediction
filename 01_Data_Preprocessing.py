@@ -157,4 +157,3 @@ print(f"제거 후 데이터 수: {len(df_clean)}") # 결측치 제거 후 50975
 
 # df_clean.to_csv('C:/dev/healthcare/semi_1/data/kyrbs2023_clean_v1.csv', index=False, encoding='utf-8-sig')
 df_clean.to_csv('./data/processed/kyrbs2020_clean_v1.csv', index=False, encoding='utf-8-sig')
-
