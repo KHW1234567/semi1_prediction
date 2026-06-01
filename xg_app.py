@@ -20,11 +20,11 @@ st.set_page_config(
 )
 
 # 2. 전역 변수 설정
-DEFAULT_DATA_FILENAME = "kyrbs2020.sas7bdat"
+DEFAULT_DATA_FILENAME = "kyrbs2020_clean_v1.csv"
 TIME_OPTIONS = ["≤3시간", "3~5시간", "5~8시간", "8시간 이상"]
 APP_TITLE = "Cheer up(치아 업)Clinic"
 APP_SUBTITLE = "청소년 스마트폰 의존과 수면의 질에 따른 구강 건강 위험도 예측 모델 개발 및 개인 맞춤형 솔루션"
-XGBOOST_DIR = Path(r"D:\streamlit\최종_1) train_v4_xgboost_output")
+XGBOOST_DIR = Path("./models")
 
 SMARTPHONE_QUESTIONS = [
     "스마트폰 이용시간을 조절하는 것이 어렵다.",
@@ -99,10 +99,9 @@ CUSTOM_CSS = """
 def resolve_data_path() -> Optional[Path]:
     script_dir = Path(__file__).resolve().parent
     candidates = [
+        script_dir / "data" / "processed" / DEFAULT_DATA_FILENAME,
         script_dir / DEFAULT_DATA_FILENAME,
         Path.cwd() / DEFAULT_DATA_FILENAME,
-        script_dir / "data" / DEFAULT_DATA_FILENAME,
-        Path("/mnt/data") / DEFAULT_DATA_FILENAME,
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -141,38 +140,37 @@ def get_risk_colors(prob: float) -> tuple[str, str, str]:
     if prob >= 0.397: return "#b26a00", "#fdf2e3", "#b26a00" 
     return "#067647", "#e5f5ed", "#067647" 
 
-# 5. 데이터 로드 및 전처리
+# 5. 데이터 로드 및 매핑
 @st.cache_data(show_spinner=False)
-def load_raw_data(uploaded_bytes: bytes | None = None) -> pd.DataFrame:
-    if uploaded_bytes is not None:
-        return pd.read_sas(io.BytesIO(uploaded_bytes), format="sas7bdat")
-    local_path = resolve_data_path()
-    if local_path is None:
-        raise FileNotFoundError(DEFAULT_DATA_FILENAME)
-    return pd.read_sas(local_path, format="sas7bdat")
-
-@st.cache_data(show_spinner=False)
-def preprocess_data(uploaded_bytes: bytes | None = None) -> pd.DataFrame:
-    raw = load_raw_data(uploaded_bytes)
-    use_cols = ["SEX", "GRADE", "E_S_RCRD", "E_SES", "INT_SPWD_TM", "INT_SPWK_TM",
-                *[f"INT_SP_OU_{i}" for i in range(1, 11)], "M_SLP_EN", "O_SYMP1", "O_SYMP2", "O_SYMP3", "O_SYMP4", "W"]
-    df = raw[use_cols].copy()
-    sp_cols = [f"INT_SP_OU_{i}" for i in range(1, 11)]
-
-    df["성별"] = df["SEX"].map({1: "남학생", 2: "여학생"})
-    df["학교급"] = df["GRADE"].apply(lambda x: "중학교" if x in [1, 2, 3] else ("고등학교" if x in [4, 5, 6] else np.nan))
-    df["학업성적"] = df["E_S_RCRD"].map({1: "상", 2: "상", 3: "중", 4: "하", 5: "하"})
-    df["경제수준"] = df["E_SES"].map({1: "상", 2: "상", 3: "중", 4: "하", 5: "하"})
-    df["주중 스마트폰 사용"] = df["INT_SPWD_TM"].apply(categorize_time)
-    df["주말 스마트폰 사용"] = df["INT_SPWK_TM"].apply(categorize_time)
-    df["스마트폰 의존 점수"] = df[sp_cols].sum(axis=1)
-    df["스마트폰 의존"] = np.where(df["스마트폰 의존 점수"] >= 23, "위험군", "일반군")
-    df["수면 상태"] = df["M_SLP_EN"].map({1: "충분", 2: "충분", 3: "부족", 4: "부족", 5: "부족"})
-    df["구강 증상"] = np.where((df[["O_SYMP1", "O_SYMP2", "O_SYMP3", "O_SYMP4"]] == 1).any(axis=1), "있음", "없음")
-    df["가중치"] = pd.to_numeric(df["W"], errors="coerce")
-
+def load_clean_data(uploaded_file=None) -> pd.DataFrame:
+    if uploaded_file is not None:
+        df = pd.read_csv(uploaded_file)
+    else:
+        local_path = resolve_data_path()
+        if local_path is None:
+            raise FileNotFoundError(DEFAULT_DATA_FILENAME)
+        df = pd.read_csv(local_path)
+    
+    df_vis = df.copy()
+    
+    map_dep = {"No": "일반군", "Risk": "위험군"}
+    map_oral = {"No": "없음", "Yes": "있음"}
+    map_sleep = {"No": "충분", "Yes": "부족"}
+    map_time = {"≤3": "≤3시간", "3 ~ 5": "3~5시간", "5 ~ 8": "5~8시간", "≥8": "8시간 이상"}
+    
+    df_vis["성별"] = df_vis["gender"].map({"Male": "남학생", "Female": "여학생"})
+    df_vis["학교급"] = df_vis["school"].map({"Middle school": "중학교", "High school": "고등학교"})
+    df_vis["학업성적"] = df_vis["grade"].map({"Low": "하", "Middle": "중", "High": "상"})
+    df_vis["경제수준"] = df_vis["income"].map({"Low": "하", "Middle": "중", "High": "상"})
+    df_vis["스마트폰 의존"] = df_vis["smartphone_dependence"].map(map_dep)
+    df_vis["구강 증상"] = df_vis["oral_health"].map(map_oral)
+    df_vis["수면 상태"] = df_vis["sleep_quality"].map(map_sleep)
+    df_vis["주중 스마트폰 사용"] = df_vis["smartphone_use_day"].map(map_time)
+    df_vis["주말 스마트폰 사용"] = df_vis["smartphone_use_weekend"].map(map_time)
+    df_vis["가중치"] = df_vis["W"]
+    
     final_cols = ["성별", "학교급", "학업성적", "경제수준", "주중 스마트폰 사용", "주말 스마트폰 사용", "스마트폰 의존", "수면 상태", "구강 증상", "가중치"]
-    return df[final_cols].dropna().copy()
+    return df_vis[final_cols].dropna().copy()
 
 # 6. 모델 로드 및 예측 관련 함수
 
@@ -501,14 +499,13 @@ def main() -> None:
     uploaded_file = None
     if resolve_data_path() is None:
         with uploader_placeholder.container():
-            st.warning("데이터 파일을 찾지 못했습니다. kyrbs2020.sas7bdat 파일을 업로드해 주세요.")
-            uploaded_file = st.file_uploader("SAS 데이터 업로드", type=["sas7bdat"])
+            st.warning("데이터 파일을 찾지 못했습니다. kyrbs2020_clean_v1.csv 파일을 업로드해 주세요.")
+            uploaded_file = st.file_uploader("CSV 데이터 업로드", type=["csv"])
             if uploaded_file is None: st.stop()
     else:
         uploader_placeholder.empty()
 
-    uploaded_bytes = uploaded_file.getvalue() if uploaded_file is not None else None
-    df = preprocess_data(uploaded_bytes)
+    df = load_clean_data(uploaded_file)
     
     xgb_model, xgb_scaler, xgb_meta = load_xgboost_model()
 
